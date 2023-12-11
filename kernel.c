@@ -185,7 +185,7 @@ void process_setup(pid_t pid, int program_number) {
     assert(r >= 0);
 
     // Exercise 4: your code here
-    processes[pid].p_registers.reg_esp = PROC_START_ADDR + PROC_SIZE * pid;
+    processes[pid].p_registers.reg_esp = MEMSIZE_VIRTUAL;
     uintptr_t stack_page = processes[pid].p_registers.reg_esp - PAGESIZE;
     physical_page_alloc(stack_page, pid);
     virtual_memory_map(processes[pid].p_pagetable, stack_page, stack_page,
@@ -282,7 +282,7 @@ void exception(x86_registers* reg) {
             virtual_memory_map(current->p_pagetable, addr, free_page,
                                PAGESIZE, PTE_P|PTE_W|PTE_U);
         else
-            panic("out of memory ):\n")
+            panic("out of memory ):\n");
         current->p_registers.reg_eax = r;
         break;
     }
