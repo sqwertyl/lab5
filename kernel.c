@@ -74,6 +74,10 @@ void memshow_virtual(x86_pagetable* pagetable, const char* name);
 void memshow_virtual_animate(void);
 int fork(void);
 
+// helper functions
+uintptr_t get_new_page(void); // returns the address of an empty page to use
+x86_pagetable* allocate_pagetable(int8_t owner);    // allocates a new pagetable
+x86_pagetable* copy_pagetable(x86_pagetable* pagetable, int8_t owner);  // copies a pagetable
 
 // kernel(command)
 //    Initialize the hardware and processes and start running. The `command`
@@ -117,7 +121,9 @@ void kernel(const char* command) {
     //   that "belongs" to the kernel is virtual addresses
     //   [0,PROC_START_ADDR). This is indicated in the lab description,
     //   and we repeat it in this hint.
+    // processes cannot access addresses belonging to kernel
     virtual_memory_map(kernel_pagetable, 0, 0, PROC_START_ADDR, PTE_P | PTE_W);
+    // processes can access the single page beginning at the address 'console'
     virtual_memory_map(kernel_pagetable, 0xB8000, 0xB8000, PAGESIZE, PTE_P | PTE_W | PTE_U);
 
 
@@ -135,38 +141,6 @@ void kernel(const char* command) {
 }
 
 
-uintptr_t get_new_page() {
-    for(int i = 0; i < NPAGES; i++)
-        if(pageinfo[i].refcount == 0) 
-            return PAGEADDRESS(i);
-    return -1;
-}
-
-
-x86_pagetable* allocate_pagetable(int8_t owner) {
-    uintptr_t new_page = get_new_page();
-    if(new_page == -1) return NULL;
-    if(physical_page_alloc(new_page, owner) != 0) return NULL;
-    return (x86_pagetable*) new_page;
-}
-
-
-x86_pagetable* copy_pagetable(x86_pagetable* pagetable, int8_t owner) {
-    // Allocate a new pagetable
-    x86_pagetable* new_pagetable1 = allocate_pagetable(owner);
-    x86_pagetable* new_pagetable2 = allocate_pagetable(owner);;
-    if (new_pagetable1 == NULL || new_pagetable2 == NULL) {
-        return NULL;
-    }
-
-    memset(new_pagetable1, 0, PAGESIZE);
-    new_pagetable1->entry[0] = PTE_P | PTE_W | PTE_U | (x86_pageentry_t) new_pagetable2;
-    memset(new_pagetable2, 0, PAGESIZE);
-    memcpy(new_pagetable2, (x86_pagetable*) PTE_ADDR(pagetable->entry[0]), sizeof(x86_pagetable));
-
-    return new_pagetable1;
-}
-
 // process_setup(pid, program_number)
 //    Load application program `program_number` as process number `pid`.
 //    This loads the application's code and data into memory, sets its
@@ -178,15 +152,19 @@ void process_setup(pid_t pid, int program_number) {
     // Exercise 2: your code here
     // processes[pid].p_pagetable = kernel_pagetable;
     // ++pageinfo[PAGENUMBER(kernel_pagetable)].refcount;
+    // create per process page table
     processes[pid].p_pagetable = copy_pagetable(kernel_pagetable, pid);
+    // map the process's memory
     virtual_memory_map(processes[pid].p_pagetable, PROC_START_ADDR, PROC_START_ADDR, MEMSIZE_PHYSICAL - PROC_START_ADDR, PTE_W | PTE_U);
 
     int r = program_load(&processes[pid], program_number);
     assert(r >= 0);
 
     // Exercise 4: your code here
+    // set stack size to MEMSIZE_VIRTUAL
     processes[pid].p_registers.reg_esp = MEMSIZE_VIRTUAL;
     uintptr_t stack_page = processes[pid].p_registers.reg_esp - PAGESIZE;
+    // allocate a new page
     uintptr_t new_page = get_new_page();
     physical_page_alloc(new_page, pid);
     virtual_memory_map(processes[pid].p_pagetable, stack_page, new_page,
@@ -271,12 +249,14 @@ void exception(x86_registers* reg) {
         //   under PROC_START_ADDR or to the page right before MEMSIZE_VIRTUAL
         //   (which would be used as the process's stack later)
         if (addr > MEMSIZE_VIRTUAL - 1 || addr < PROC_START_ADDR) {
+            // return -1 if invalid
             current->p_registers.reg_eax = -1;
             panic("invalid address\n");
         }
 
 
         // Exercise 3: your code here
+        // allocate a new page and map it to the given address
         uintptr_t free_page = get_new_page();
         int r = physical_page_alloc(free_page, current->p_pid);
         if (r >= 0)
@@ -341,11 +321,13 @@ int fork(void) {
     // Exercise 5: your code here
     //   Copy the address space of the current process to the new child process.
     //   You can do this with virtual_memory_map and memcpy.
+    // copy over pagetable for child process
     processes[pid].p_pagetable = copy_pagetable(current->p_pagetable, pid);
-    if (processes[pid].p_pagetable == NULL)
-        return -1;
+    // iterate over all pages in the current process
     for (uintptr_t address = PROC_START_ADDR; address < MEMSIZE_VIRTUAL; address += PAGESIZE) {
+        // get the virtual address mapping
         vamapping virtual_address = virtual_memory_lookup(processes[pid].p_pagetable, address);
+        // if proper permissions then copy over the page
         if (virtual_address.pn >= 0 && virtual_address.perm & PTE_P) {
             uintptr_t new_page = get_new_page();
             if (new_page == -1) return -1;
@@ -587,4 +569,39 @@ void memshow_virtual_animate(void) {
         snprintf(s, 4, "%d ", showing);
         memshow_virtual(processes[showing].p_pagetable, s);
     }
+}
+
+
+// gets a new unused page to use
+uintptr_t get_new_page() {
+    for(int i = 0; i < NPAGES; i++)
+        if(pageinfo[i].refcount == 0) 
+            return PAGEADDRESS(i);
+    return -1;
+}
+
+// allocates a new pagetable from new unused page
+x86_pagetable* allocate_pagetable(int8_t owner) {
+    uintptr_t new_page = get_new_page();
+    if(new_page == -1) return NULL;
+    if(physical_page_alloc(new_page, owner) != 0) return NULL;
+    return (x86_pagetable*) new_page;
+}
+
+// copies page table
+x86_pagetable* copy_pagetable(x86_pagetable* pagetable, int8_t owner) {
+    // Allocate two new page tables for 2-level page table
+    x86_pagetable* new_pagetable1 = allocate_pagetable(owner);
+    x86_pagetable* new_pagetable2 = allocate_pagetable(owner);;
+
+    // if allocation fails, return NULL
+    if (new_pagetable1 == NULL || new_pagetable2 == NULL) return NULL;
+
+    // copy over the page table entries
+    memset(new_pagetable1, 0, PAGESIZE);
+    new_pagetable1->entry[0] = PTE_P | PTE_W | PTE_U | (x86_pageentry_t) new_pagetable2;
+    memset(new_pagetable2, 0, PAGESIZE);
+    memcpy(new_pagetable2, (x86_pagetable*) PTE_ADDR(pagetable->entry[0]), sizeof(x86_pagetable));
+
+    return new_pagetable1;
 }
