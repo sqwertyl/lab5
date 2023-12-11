@@ -1,6 +1,5 @@
 #include "kernel.h"
 #include "lib.h"
-
 // kernel.c
 //
 //    This is the kernel.
@@ -97,30 +96,31 @@ void kernel(const char* command) {
         processes[i].p_state = P_FREE;
     }
 
-    // Exercise 1: your code here
+    // Exercise 1
     //  
-    // Note that by the time the code gets to this point, the virtual
-    // memory mapping is set up to be the identity mapping (as noted in
-    // the lab description). (Use your code navigation skills to search
-    // for previous invocations of virtual_memory_map.) Furthermore,
-    // all processes have access to all memory.
+    //  Note that by the time the code gets to this point, the virtual
+    //  memory mapping is set up to be the identity mapping (as noted in
+    //  the lab description). (Use your code navigation skills to search
+    //  for previous invocations of virtual_memory_map.) Furthermore,
+    //  all processes have access to all memory.
     //
-    // Your job is to use virtual_memory_map to 
-    //   (1) _restrict_ processes from accessing virtual addresses
-    //   that "belong" to the kernel, and
-    //   (2) allow processes to access the single page beginning at the
-    //   address 'console'.
+    //  Your job is to use virtual_memory_map to 
+    //    (1) _restrict_ processes from accessing virtual addresses
+    //    that "belong" to the kernel, and
+    //    (2) allow processes to access the single page beginning at the
+    //    address 'console'.
     //
     // Hints:
-    // * Call virtual_memory_map twice. 
-    // * For (1), above, the part of each process's address space
-    //   that "belongs" to the kernel is virtual addresses
-    //   [0,PROC_START_ADDR). This is indicated in the lab description,
-    //   and we repeat it in this hint.
+    //  * Call virtual_memory_map twice. 
+    //  * For (1), above, the part of each process's address space
+    //    that "belongs" to the kernel is virtual addresses
+    //    [0,PROC_START_ADDR). This is indicated in the lab description,
+    //    and we repeat it in this hint.
+
+    //processes can not access virtual addresses that "belong" to the kernel (the flag PTE_U is not set)
     virtual_memory_map(kernel_pagetable, 0, 0, PROC_START_ADDR, PTE_P | PTE_W);
+    //processes can access the single page beginning at the address 'console' (the flag PTE_U is set)
     virtual_memory_map(kernel_pagetable, 0xB8000, 0xB8000, PAGESIZE, PTE_P | PTE_W | PTE_U);
-
-
 
     if (command && strcmp(command, "fork") == 0)
         process_setup(1, 4);
@@ -134,39 +134,45 @@ void kernel(const char* command) {
     run(&processes[1]);
 }
 
-
-uintptr_t get_new_page() {
-    for(int i = 0; i < NPAGES; i++)
-        if(pageinfo[i].refcount == 0) 
-            return PAGEADDRESS(i);
-    return -1;
-}
-
-
-x86_pagetable* allocate_pagetable(int8_t owner) {
-    uintptr_t new_page = get_new_page();
-    if(new_page == -1) return NULL;
-    if(physical_page_alloc(new_page, owner) != 0) return NULL;
-    return (x86_pagetable*) new_page;
-}
-
-
-x86_pagetable* copy_pagetable(x86_pagetable* pagetable, int8_t owner) {
-    // Allocate a new pagetable
-    x86_pagetable* new_pagetable1 = allocate_pagetable(owner);
-    x86_pagetable* new_pagetable2 = allocate_pagetable(owner);;
-    if (new_pagetable1 == NULL || new_pagetable2 == NULL) {
-        return NULL;
+uintptr_t find_free_page() {
+    uintptr_t addr = -1;
+    //find first page with no references and return its address
+    for(int pageNum = 0; pageNum < NPAGES; pageNum++) {
+        if(pageinfo[pageNum].refcount == 0) 
+            return PAGEADDRESS(pageNum);
     }
-
-    memset(new_pagetable1, 0, PAGESIZE);
-    new_pagetable1->entry[0] = PTE_P | PTE_W | PTE_U | (x86_pageentry_t) new_pagetable2;
-    memset(new_pagetable2, 0, PAGESIZE);
-    memcpy(new_pagetable2, (x86_pagetable*) PTE_ADDR(pagetable->entry[0]), sizeof(x86_pagetable));
-
-    return new_pagetable1;
+    return addr;
 }
 
+//allocate_pagetable(int8_t owner)
+//find the next available pagetable and allocate it to the owner
+x86_pagetable* allocate_pagetable(int8_t owner) {
+    uintptr_t addr = find_free_page();
+    //if there is no free page, return NULL
+    if(addr == -1) return NULL;
+    //if there is a free page, allocate it to the owner, and if it fails, return NULL
+    if(physical_page_alloc(addr, owner) != 0) return NULL;
+    //if it succeeds, return the address of the new pagetable
+    return (x86_pagetable*) addr;
+}
+
+//copy_pagetable(x86_pagetable* pagetable, int8_t owner)
+x86_pagetable* copy_pagetable(x86_pagetable* pagetable, int8_t owner) {
+    x86_pagetable* pt_level_1 = allocate_pagetable(owner);
+    x86_pagetable* pt_level_2 = allocate_pagetable(owner);
+
+    //copy level 1 pagetable
+    //level 1 is all 0 except pt->entry[0] = (x86_pageentry_t) address_of_new_l2_pagetable | PTE_P | PTE_W | PTE_U
+    memset(pt_level_1, 0, PAGESIZE);
+    pt_level_1->entry[0] = (x86_pageentry_t) pt_level_2 | PTE_P | PTE_W | PTE_U;
+
+    //copy level 2 pagetable
+    //level 2 is all 0 except pt->entry[0] = (x86_pageentry_t) address_of_new_l2_pagetable | PTE_P | PTE_W | PTE_U
+    memset(pt_level_2, 0, PAGESIZE);
+    memcpy(pt_level_2, (x86_pagetable *) PTE_ADDR(pagetable->entry[0]), sizeof(x86_pagetable));
+
+    return pt_level_1;
+}
 // process_setup(pid, program_number)
 //    Load application program `program_number` as process number `pid`.
 //    This loads the application's code and data into memory, sets its
@@ -175,20 +181,21 @@ x86_pagetable* copy_pagetable(x86_pagetable* pagetable, int8_t owner) {
 void process_setup(pid_t pid, int program_number) {
     process_init(&processes[pid], 0);
 
-    // Exercise 2: your code here
-    // processes[pid].p_pagetable = kernel_pagetable;
-    // ++pageinfo[PAGENUMBER(kernel_pagetable)].refcount;
+    // Exercise 2
     processes[pid].p_pagetable = copy_pagetable(kernel_pagetable, pid);
-    virtual_memory_map(processes[pid].p_pagetable, PROC_START_ADDR, PROC_START_ADDR, MEMSIZE_PHYSICAL - PROC_START_ADDR, PTE_W | PTE_U);
+    virtual_memory_map(processes[pid].p_pagetable, PROC_START_ADDR, PROC_START_ADDR,
+                       MEMSIZE_PHYSICAL - PROC_START_ADDR, PTE_W|PTE_U);
 
     int r = program_load(&processes[pid], program_number);
     assert(r >= 0);
 
-    // Exercise 4: your code here
-    processes[pid].p_registers.reg_esp = PROC_START_ADDR + PROC_SIZE * pid;
+    // Exercise 4
+    //start at MEMSIZE_VIRTUAL instead
+    processes[pid].p_registers.reg_esp = MEMSIZE_VIRTUAL;
     uintptr_t stack_page = processes[pid].p_registers.reg_esp - PAGESIZE;
-    physical_page_alloc(stack_page, pid);
-    virtual_memory_map(processes[pid].p_pagetable, stack_page, stack_page,
+    uintptr_t pa = find_free_page();
+    physical_page_alloc(pa, pid);
+    virtual_memory_map(processes[pid].p_pagetable, stack_page, pa,
                        PAGESIZE, PTE_P|PTE_W|PTE_U);
     processes[pid].p_state = P_RUNNABLE;
 }
@@ -265,22 +272,28 @@ void exception(x86_registers* reg) {
 
     case INT_SYS_PAGE_ALLOC: {
         uintptr_t addr = current->p_registers.reg_eax;
-        // Exercise 1: Your code here
+        // Exercise 1
         //   sys_page_alloc should not be able to map a page to virtual address
         //   under PROC_START_ADDR or to the page right before MEMSIZE_VIRTUAL
         //   (which would be used as the process's stack later)
-        if (addr > MEMSIZE_VIRTUAL - 1 || addr < PROC_START_ADDR) {
-            current->p_registers.reg_eax = -1;
-            panic("sys_page_alloc: invalid address\n");
+        if(addr < PROC_START_ADDR || addr > MEMSIZE_VIRTUAL - 1){
+            panic("sys_page_alloc: address out of range\n");
         }
 
-
-        // Exercise 3: your code here
-        uintptr_t free_page = get_new_page();
-        int r = physical_page_alloc(free_page, current->p_pid);
+        // Exercise 3 
+        //find free page
+        uintptr_t pa = find_free_page();
+        //allocate the page and record in pageinfo
+        int r = physical_page_alloc(pa, current->p_pid);
         if (r >= 0)
-            virtual_memory_map(current->p_pagetable, addr, addr,
+            //map the physical page to the requested virtual address
+            virtual_memory_map(current->p_pagetable, addr, pa,
                                PAGESIZE, PTE_P|PTE_W|PTE_U);
+        else
+            //throw an error if there is no free page
+            // console_printf(CPOS(24, 0), 0x0C00,
+                    //    "OUT OF MEMORY: sys_page_alloc failed\n");
+            panic("sys_page_alloc: no physical memory\n");
         current->p_registers.reg_eax = r;
         break;
     }
@@ -334,8 +347,26 @@ int fork(void) {
         ;
     if (pid >= NPROC)
         return -1;
-
     // Exercise 5: your code here
+    else {
+        //if a free slot is found, copy the current process's pagetable
+        processes[pid].p_pagetable = copy_pagetable(current->p_pagetable, pid);
+        //iterate through the virtual address space
+        for(uintptr_t va = PROC_START_ADDR; va < MEMSIZE_PHYSICAL; va+= PAGESIZE) {
+            //check if the virtual address is mapped to a physical address
+            vamapping vam = virtual_memory_lookup(processes[pid].p_pagetable, va);
+            //if we have permissions
+            if(vam.perm) {
+                //find a free page and allocate it to the process
+                uintptr_t pa = find_free_page();
+                if(physical_page_alloc(pa, pid) == 0) {
+                    //copy the contents of the physical page to the new page
+                    memcpy((uintptr_t*) pa, (uintptr_t*) vam.pa, PAGESIZE);
+                    virtual_memory_map(processes[pid].p_pagetable, va, pa, PAGESIZE, vam.perm);
+                }
+            }
+        }
+    }
 
     processes[pid].p_registers = current->p_registers;
     processes[pid].p_registers.reg_eax = 0;
