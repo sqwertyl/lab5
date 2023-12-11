@@ -187,8 +187,9 @@ void process_setup(pid_t pid, int program_number) {
     // Exercise 4: your code here
     processes[pid].p_registers.reg_esp = MEMSIZE_VIRTUAL;
     uintptr_t stack_page = processes[pid].p_registers.reg_esp - PAGESIZE;
-    physical_page_alloc(stack_page, pid);
-    virtual_memory_map(processes[pid].p_pagetable, stack_page, stack_page,
+    uintptr_t new_page = get_new_page();
+    physical_page_alloc(new_page, pid);
+    virtual_memory_map(processes[pid].p_pagetable, stack_page, new_page,
                        PAGESIZE, PTE_P|PTE_W|PTE_U);
     processes[pid].p_state = P_RUNNABLE;
 }
