@@ -76,7 +76,6 @@ int fork(void);
 
 // helper functions
 uintptr_t get_new_page(void); // returns the address of an empty page to use
-x86_pagetable* allocate_pagetable(int8_t owner);    // allocates a new pagetable
 x86_pagetable* copy_pagetable(x86_pagetable* pagetable, int8_t owner);  // copies a pagetable
 
 // kernel(command)
@@ -581,18 +580,18 @@ uintptr_t get_new_page() {
 }
 
 // allocates a new pagetable from new unused page
-x86_pagetable* allocate_pagetable(int8_t owner) {
+x86_pagetable* get_new_pagetable(int8_t owner) {
     uintptr_t new_page = get_new_page();
-    if(new_page == -1) return NULL;
-    if(physical_page_alloc(new_page, owner) != 0) return NULL;
+    if(new_page == -1 || physical_page_alloc(new_page, owner) != 0)
+        return NULL;
     return (x86_pagetable*) new_page;
 }
 
 // copies page table
 x86_pagetable* copy_pagetable(x86_pagetable* pagetable, int8_t owner) {
     // Allocate two new page tables for 2-level page table
-    x86_pagetable* new_pagetable1 = allocate_pagetable(owner);
-    x86_pagetable* new_pagetable2 = allocate_pagetable(owner);;
+    x86_pagetable* new_pagetable1 = get_new_pagetable(owner);
+    x86_pagetable* new_pagetable2 = get_new_pagetable(owner);
 
     // if allocation fails, return NULL
     if (new_pagetable1 == NULL || new_pagetable2 == NULL) return NULL;
