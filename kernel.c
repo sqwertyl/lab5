@@ -271,7 +271,7 @@ void exception(x86_registers* reg) {
         //   (which would be used as the process's stack later)
         if (addr > MEMSIZE_VIRTUAL - 1 || addr < PROC_START_ADDR) {
             current->p_registers.reg_eax = -1;
-            panic("sys_page_alloc: invalid address\n")
+            panic("sys_page_alloc: invalid address\n");
         }
 
 
