@@ -345,14 +345,14 @@ int fork(void) {
     if (processes[pid].p_pagetable == NULL)
         return -1;
     for (uintptr_t address = 0; address < MEMSIZE_VIRTUAL; address += PAGESIZE) {
-        vamapping vam = virtual_memory_lookup(current->p_pagetable, address);
-        if (vam.pn >= 0 && vam.perm & PTE_P) {
+        vamapping virtual_address = virtual_memory_lookup(current->p_pagetable, address);
+        if (virtual_address.pn >= 0 && virtual_address.perm & PTE_P) {
             uintptr_t new_page = get_new_page();
             if (new_page == -1) return -1;
             physical_page_alloc(new_page, pid);
             virtual_memory_map(processes[pid].p_pagetable, address, new_page,
-                               PAGESIZE, PTE_P|PTE_W|PTE_U);
-            memcpy((void*) address, (void*) vam.pa, PAGESIZE);
+                               PAGESIZE, virtual_address.perm);
+            memcpy((uintptr_t*) new_page, (uintptr_t*) virtual_address.pa, PAGESIZE);
         }
     }
 
