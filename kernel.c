@@ -345,7 +345,7 @@ int fork(void) {
     if (processes[pid].p_pagetable == NULL)
         return -1;
     for (uintptr_t address = 0; address < MEMSIZE_VIRTUAL; address += PAGESIZE) {
-        vamapping virtual_address = virtual_memory_lookup(current->p_pagetable, address);
+        vamapping virtual_address = virtual_memory_lookup(processes[pid].p_pagetable, address);
         if (virtual_address.pn >= 0 && virtual_address.perm & PTE_P) {
             uintptr_t new_page = get_new_page();
             if (new_page == -1) return -1;
