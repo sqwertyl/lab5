@@ -339,6 +339,22 @@ int fork(void) {
         return -1;
 
     // Exercise 5: your code here
+    //   Copy the address space of the current process to the new child process.
+    //   You can do this with virtual_memory_map and memcpy.
+    processes[pid].p_pagetable = copy_pagetable(current->p_pagetable, pid);
+    if (processes[pid].p_pagetable == NULL)
+        return -1;
+    for (uintptr_t address = 0; address < MEMSIZE_VIRTUAL; address += PAGESIZE) {
+        vamapping vam = virtual_memory_lookup(current->p_pagetable, address);
+        if (vam.pn >= 0 && vam.perm & PTE_P) {
+            uintptr_t new_page = get_new_page();
+            if (new_page == -1) return -1;
+            physical_page_alloc(new_page, pid);
+            virtual_memory_map(processes[pid].p_pagetable, address, new_page,
+                               PAGESIZE, PTE_P|PTE_W|PTE_U);
+            memcpy((void*) address, (void*) vam.pa, PAGESIZE);
+        }
+    }
 
     processes[pid].p_registers = current->p_registers;
     processes[pid].p_registers.reg_eax = 0;
