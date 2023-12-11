@@ -117,8 +117,8 @@ void kernel(const char* command) {
     //   that "belongs" to the kernel is virtual addresses
     //   [0,PROC_START_ADDR). This is indicated in the lab description,
     //   and we repeat it in this hint.
-    virtual_memory_map(&processes[0].p_pagetable, 0, PROC_START_ADDR, 0, 0);
-    virtual_memory_map(&processes[0].p_pagetable, (uintptr_t)console, PAGESIZE, (uintptr_t)console, PTE_P | PTE_W);
+    virtual_memory_map(kernel_pagetable, 0, 0, PROC_START_ADDR, PTE_P | PTE_W);
+    virtual_memory_map(kernel_pagetable, 0xB8000, 0xB8000, PAGESIZE, PTE_P | PTE_W | PTE_U);
 
 
 
@@ -133,32 +133,38 @@ void kernel(const char* command) {
     // Switch to the first process using run()
     run(&processes[1]);
 }
-// Implement the function
+
+
+uintptr_t get_new_page() {
+    for(int i = 0; i < NPAGES; i++)
+        if(pageinfo[i].refcount == 0) 
+            return PAGEADDRESS(i);
+    return -1;
+}
+
+
+x86_pagetable* allocate_pagetable(int8_t owner) {
+    uintptr_t new_page = get_new_page();
+    if(new_page == -1) return NULL;
+    if(physical_page_alloc(new_page, owner) != 0) return NULL;
+    return (x86_pagetable*) new_page;
+}
+
+
 x86_pagetable* copy_pagetable(x86_pagetable* pagetable, int8_t owner) {
     // Allocate a new pagetable
-    x86_pagetable* new_pagetable = (x86_pagetable*) physical_page_alloc(0, owner);
-    if (new_pagetable == NULL) {
+    x86_pagetable* new_pagetable1 = allocate_pagetable(owner);
+    x86_pagetable* new_pagetable2 = allocate_pagetable(owner);;
+    if (new_pagetable1 == NULL || new_pagetable2 == NULL) {
         return NULL;
     }
 
-    // Iterate over the first two entries in the pagetable
-    for (int i = 0; i < 2; ++i) {
-        if (pagetable->entry[i] & PTE_P) {
-            // If the entry is present, allocate a new physical page
-            uintptr_t new_page = physical_page_alloc(0, owner);
-            if (new_page == -1) {
-                return NULL;
-            }
+    memset(new_pagetable1, 0, PAGESIZE);
+    new_pagetable1->entry[0] = PTE_P | PTE_W | PTE_U | (x86_pageentry_t) new_pagetable2;
+    memset(new_pagetable2, 0, PAGESIZE);
+    memcpy(new_pagetable2, (x86_pagetable*) PTE_ADDR(pagetable->entry[0]), sizeof(x86_pagetable));
 
-            // Copy the contents of the original page to the new page
-            memcpy((void*) new_page, (void*) (pagetable->entry[i] & PAGE_MASK), PAGESIZE);
-
-            // Update the pagetable entry to point to the new page
-            new_pagetable->entry[i] = new_page | (pagetable->entry[i] & ~PAGE_MASK);
-        }
-    }
-
-    return new_pagetable;
+    return new_pagetable1;
 }
 
 // process_setup(pid, program_number)
@@ -263,29 +269,14 @@ void exception(x86_registers* reg) {
         //   sys_page_alloc should not be able to map a page to virtual address
         //   under PROC_START_ADDR or to the page right before MEMSIZE_VIRTUAL
         //   (which would be used as the process's stack later)
-        int physical_page_alloc(uintptr_t addr, int8_t owner) {
-            if ((addr & 0xFFF) != 0
-                || addr >= MEMSIZE_PHYSICAL
-                || pageinfo[PAGENUMBER(addr)].refcount != 0
-                || addr == PROC_START_ADDR
-                || addr == MEMSIZE_VIRTUAL - PAGESIZE) {
-                return -1;
-            } else {
-                pageinfo[PAGENUMBER(addr)].refcount = 1;
-                pageinfo[PAGENUMBER(addr)].owner = owner;
-                return 0;
-            }
+        if (addr > MEMSIZE_VIRTUAL - 1 || addr < PROC_START_ADDR) {
+            current->p_registers.reg_eax = -1;
+            panic("sys_page_alloc: invalid address\n")
         }
 
 
         // Exercise 3: your code here
-        uintptr_t free_page = -1
-        for (int i = 0; i < NPAGES; ++i) {
-            if (pageinfo[i].refcount == 0) {
-                free_page = PAGEADDRESS(i);
-                break;
-            }
-        }
+        uintptr_t free_page = get_new_page();
         int r = physical_page_alloc(free_page, current->p_pid);
         if (r >= 0)
             virtual_memory_map(current->p_pagetable, addr, addr,
