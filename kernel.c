@@ -271,7 +271,7 @@ void exception(x86_registers* reg) {
         //   (which would be used as the process's stack later)
         if (addr > MEMSIZE_VIRTUAL - 1 || addr < PROC_START_ADDR) {
             current->p_registers.reg_eax = -1;
-            panic("sys_page_alloc: invalid address\n");
+            panic("invalid address\n");
         }
 
 
@@ -279,8 +279,10 @@ void exception(x86_registers* reg) {
         uintptr_t free_page = get_new_page();
         int r = physical_page_alloc(free_page, current->p_pid);
         if (r >= 0)
-            virtual_memory_map(current->p_pagetable, addr, addr,
+            virtual_memory_map(current->p_pagetable, addr, free_page,
                                PAGESIZE, PTE_P|PTE_W|PTE_U);
+        else
+            panic("out of memory ):\n")
         current->p_registers.reg_eax = r;
         break;
     }
